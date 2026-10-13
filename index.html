@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPS Merilec Hitrosti</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            margin-bottom: 5px;
+            font-size: 1.4rem;
+            color: #4CAF50;
+        }
+        #status {
+            margin-bottom: 15px;
+            font-size: 0.85rem;
+            color: #ffeb3b;
+        }
+        .container {
+            width: 100%;
+            max-width: 400px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background-color: #1e1e1e;
+            border-radius: 10px;
+            padding: 12px;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .card.full {
+            grid-column: span 2;
+        }
+        .card h3 {
+            margin: 0 0 5px 0;
+            font-size: 0.8rem;
+            color: #b0b0b0;
+        }
+        .card .value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #ffffff;
+        }
+        .card .unit {
+            font-size: 0.75rem;
+            color: #888;
+        }
+        .highlight-card {
+            background-color: #2c1e1e;
+            border: 1px solid #d32f2f;
+        }
+        .highlight-card h3 {
+            color: #ff8a80;
+        }
+        .highlight-card .value {
+            color: #ff5252;
+        }
+        .buttons {
+            display: flex;
+            gap: 10px;
+            width: 100%;
+            max-width: 400px;
+        }
+        button {
+            flex: 1;
+            padding: 14px;
+            font-size: 1rem;
+            font-weight: bold;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            color: white;
+        }
+        #startBtn { background-color: #4CAF50; }
+        #stopBtn { background-color: #f44336; }
+        #resetBtn { background-color: #ff9800; }
+        button:disabled {
+            background-color: #555;
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>GPS Merilec Potovanja</h1>
+    <div id="status">Pripravljeno za zagon</div>
+
+    <div class="container">
+        <div class="card full">
+            <h3>TRENUTNA HITROST</h3>
+            <div class="value" id="currentSpeed">0.0</div>
+            <div class="unit">km/h</div>
+        </div>
+
+        <div class="card">
+            <h3>NAJVIŠJA HITROST</h3>
+            <div class="value" id="maxSpeed">0.0</div>
+            <div class="unit">km/h</div>
+        </div>
+
+        <div class="card">
+            <h3>POVPREČNA HITROST</h3>
+            <div class="value" id="avgSpeed">0.0</div>
+            <div class="unit">km/h</div>
+        </div>
+
+        <div class="card">
+            <h3>PREVOŽENA RAZDALJA</h3>
+            <div class="value" id="distance">0.00</div>
+            <div class="unit">km</div>
+        </div>
+
+        <div class="card">
+            <h3>ČAS VOŽNJE</h3>
+            <div class="value" id="time">00:00:00</div>
+            <div class="unit">hh:mm:ss</div>
+        </div>
+
+        <!-- Dodane funkcije za hitrost nad 130 km/h -->
+        <div class="card highlight-card">
+            <h3>ČAS > 130 KM/H</h3>
+            <div class="value" id="timeAbove130">00:00:00</div>
+            <div class="unit">hh:mm:ss</div>
+        </div>
+
+        <div class="card highlight-card">
+            <h3>POVPR. HITROST > 130</h3>
+            <div class="value" id="avgSpeedAbove130">0.0</div>
+            <div class="unit">km/h</div>
+        </div>
+    </div>
+
+    <div class="buttons">
+        <button id="startBtn" onclick="startTracking()">Start</button>
+        <button id="stopBtn" onclick="stopTracking()" disabled>Stop</button>
+        <button id="resetBtn" onclick="resetData()">Reset</button>
+    </div>
+
+    <script>
+        let isTracking = false;
+        let watchId = null;
+        let timerInterval = null;
+
+        let currentSpeed = 0;
+        let maxSpeed = 0;
+        let totalDistance = 0; // v metrih
+        let elapsedTime = 0; // v sekundah
+        let lastCoords = null;
+
+        let timeAbove130 = 0; // v sekundah
+        let sumSpeedAbove130 = 0;
+        let countSpeedAbove130 = 0;
+
+        function formatTime(totalSeconds) {
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            return [hours, minutes, seconds]
+                .map(v => String(v).padStart(2, '0'))
+                .join(':');
+        }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; // radij Zemlje v metrih
+            const φ1 = lat1 * Math.PI/180;
+            const φ2 = lat2 * Math.PI/180;
+            const Δφ = (lat2-lat1) * Math.PI/180;
+            const Δλ = (lon2-lon1) * Math.PI/180;
+
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+
+        function startTracking() {
+            if (!navigator.geolocation) {
+                alert("Vaš brskalnik ne podpira geolokacije.");
+                return;
+            }
+
+            isTracking = true;
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            document.getElementById('status').innerText = "Iskanje GPS signala...";
+
+            const options = {
+                enableHighAccuracy: true,
+                maximumAge: 0,
+                timeout: 5000
+            };
+
+            watchId = navigator.geolocation.watchPosition(successPosition, errorPosition, options);
+
+            if (!timerInterval) {
+                timerInterval = setInterval(() => {
+                    elapsedTime++;
+                    document.getElementById('time').innerText = formatTime(elapsedTime);
+
+                    // Preverjanje za hitrost nad 130 km/h vsako sekundo
+                    if (currentSpeed > 130) {
+                        timeAbove130++;
+                        document.getElementById('timeAbove130').innerText = formatTime(timeAbove130);
+                        
+                        sumSpeedAbove130 += currentSpeed;
+                        countSpeedAbove130++;
+                        let avgAbove = sumSpeedAbove130 / countSpeedAbove130;
+                        document.getElementById('avgSpeedAbove130').innerText = avgAbove.toFixed(1);
+                    }
+                }, 1000);
+            }
+        }
+
+        function successPosition(position) {
+            document.getElementById('status').innerText = "GPS aktiven (snemanje poteka)";
+            
+            // Hitrost je v m/s, pretvorimo jo v km/h (* 3.6)
+            if (position.coords.speed !== null && position.coords.speed >= 0) {
+                currentSpeed = position.coords.speed * 3.6;
+            } else {
+                currentSpeed = 0; 
+            }
+
+            document.getElementById('currentSpeed').innerText = currentSpeed.toFixed(1);
+
+            // Najvišja hitrost
+            if (currentSpeed > maxSpeed) {
+                maxSpeed = currentSpeed;
+                document.getElementById('maxSpeed').innerText = maxSpeed.toFixed(1);
+            }
+
+            // Izračun razdalje
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+
+            if (lastCoords) {
+                const dist = calculateDistance(lastCoords.lat, lastCoords.lon, lat, lon);
+                // Filtriranje nerealnih GPS skokov (> 200 metrov v enem intervalu)
+                if (dist < 200) {
+                    totalDistance += dist;
+                    document.getElementById('distance').innerText = (totalDistance / 1000).toFixed(2);
+                }
+            }
+            lastCoords = { lat, lon };
+
+            // Skupna povprečna hitrost
+            if (elapsedTime > 0) {
+                const avg = (totalDistance / 1000) / (elapsedTime / 3600);
+                document.getElementById('avgSpeed').innerText = avg.toFixed(1);
+            }
+        }
+
+        function errorPosition(error) {
+            document.getElementById('status').innerText = "Napaka GPS: " + error.message;
+        }
+
+        function stopTracking() {
+            isTracking = false;
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('status').innerText = "Merjenje ustavljeno";
+        }
+
+        function resetData() {
+            stopTracking();
+            currentSpeed = 0;
+            maxSpeed = 0;
+            totalDistance = 0;
+            elapsedTime = 0;
+            lastCoords = null;
+            timeAbove130 = 0;
+            sumSpeedAbove130 = 0;
+            countSpeedAbove130 = 0;
+
+            document.getElementById('currentSpeed').innerText = "0.0";
+            document.getElementById('maxSpeed').innerText = "0.0";
+            document.getElementById('avgSpeed').innerText = "0.0";
+            document.getElementById('distance').innerText = "0.00";
+            document.getElementById('time').innerText = "00:00:00";
+            document.getElementById('timeAbove130').innerText = "00:00:00";
+            document.getElementById('avgSpeedAbove130').innerText = "0.0";
+            document.getElementById('status').innerText = "Ponastavljeno";
+        }
+    </script>
+</body>
+</html>
