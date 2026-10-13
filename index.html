@@ -159,6 +159,7 @@
         let totalDistance = 0; // v metrih
         let elapsedTime = 0; // v sekundah
         let lastCoords = null;
+        let lastPositionTime = null;
 
         let timeAbove130 = 0; // v sekundah
         let sumSpeedAbove130 = 0;
@@ -187,6 +188,11 @@
             return R * c;
         }
 
+        function updateAverageSpeed() {
+            const avg = elapsedTime > 0 ? (totalDistance / elapsedTime) * 3.6 : 0;
+            document.getElementById('avgSpeed').innerText = avg.toFixed(1);
+        }
+
         function startTracking() {
             if (!navigator.geolocation) {
                 alert("Vaš brskalnik ne podpira geolokacije.");
@@ -194,6 +200,9 @@
             }
 
             isTracking = true;
+            // Po premoru ne prištevaj poti, opravljene brez merjenja.
+            lastCoords = null;
+            lastPositionTime = null;
             document.getElementById('startBtn').disabled = true;
             document.getElementById('stopBtn').disabled = false;
             document.getElementById('status').innerText = "Iskanje GPS signala...";
@@ -210,6 +219,7 @@
                 timerInterval = setInterval(() => {
                     elapsedTime++;
                     document.getElementById('time').innerText = formatTime(elapsedTime);
+                    updateAverageSpeed();
 
                     // Preverjanje za hitrost nad 130 km/h vsako sekundo
                     if (currentSpeed > 130) {
@@ -247,21 +257,24 @@
             const lat = position.coords.latitude;
             const lon = position.coords.longitude;
 
-            if (lastCoords) {
+            const fixTime = position.timestamp;
+            const accuracy = position.coords.accuracy;
+            if (lastCoords && lastPositionTime !== null) {
+                const deltaSeconds = (fixTime - lastPositionTime) / 1000;
                 const dist = calculateDistance(lastCoords.lat, lastCoords.lon, lat, lon);
-                // Filtriranje nerealnih GPS skokov (> 200 metrov v enem intervalu)
-                if (dist < 200) {
+                // Prag je vezan na čas med meritvama, ne na fiksnih 200 m.
+                // Omejitev 300 km/h odstrani očitne skoke GPS signala.
+                const plausible = deltaSeconds > 0 && dist / deltaSeconds <= 300 / 3.6;
+                // Majhne premike znotraj napake GPS prezremo.
+                const significant = dist > Math.max(5, Math.min(accuracy, 25));
+                if (plausible && significant) {
                     totalDistance += dist;
                     document.getElementById('distance').innerText = (totalDistance / 1000).toFixed(2);
                 }
             }
             lastCoords = { lat, lon };
-
-            // Skupna povprečna hitrost
-            if (elapsedTime > 0) {
-                const avg = (totalDistance / 1000) / (elapsedTime / 3600);
-                document.getElementById('avgSpeed').innerText = avg.toFixed(1);
-            }
+            lastPositionTime = fixTime;
+            updateAverageSpeed();
         }
 
         function errorPosition(error) {
@@ -270,6 +283,9 @@
 
         function stopTracking() {
             isTracking = false;
+            lastCoords = null;
+            lastPositionTime = null;
+            currentSpeed = 0;
             if (watchId !== null) {
                 navigator.geolocation.clearWatch(watchId);
                 watchId = null;
@@ -290,6 +306,7 @@
             totalDistance = 0;
             elapsedTime = 0;
             lastCoords = null;
+            lastPositionTime = null;
             timeAbove130 = 0;
             sumSpeedAbove130 = 0;
             countSpeedAbove130 = 0;
